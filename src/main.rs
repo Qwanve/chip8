@@ -18,8 +18,11 @@ use ux::u4;
 fn main() {
     env_logger::init();
     let vram = Mutex::<[bool; 64 * 32]>::new([false; 64 * 32]);
+    let file = std::env::args()
+        .nth(1)
+        .expect("Expected rom as first arguement");
     debug!("Opening rom");
-    let rom = std::fs::read("./1-chip8-logo.ch8").unwrap();
+    let rom = std::fs::read(file).unwrap();
     let mut state = State::new(&vram, rom);
     let mut disp = pin!(sdl2(&vram).fuse());
     smol::block_on(async {
