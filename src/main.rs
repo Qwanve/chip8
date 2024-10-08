@@ -112,6 +112,11 @@ impl State<'_> {
                 debug!("Load register {register} with {value}");
                 self.registers[usize::from(u16::from(register))] = value;
             }
+            AddToRegister { register, value } => {
+                debug!("Adding {value:X} to register {register}");
+                let reg = &mut self.registers[usize::from(u16::from(register))];
+                *reg = reg.wrapping_add(value);
+            }
             LoadIRegister { value } => {
                 debug!("Load register I with {value}");
                 self.vi = value.into();
@@ -155,6 +160,7 @@ enum DecodedInstr {
     ClearScreen,
     Jump { address: u12 },
     LoadRegister { register: u4, value: u8 },
+    AddToRegister { register: u4, value: u8 },
     LoadIRegister { value: u12 },
     DrawSprite { x: u4, y: u4, bytes: u4 },
     IllegalInstruction(u16),
@@ -168,6 +174,10 @@ impl Instr {
                 address: (self.0 & 0x0FFF).try_into().unwrap(),
             },
             0x6000..=0x6FFF => DecodedInstr::LoadRegister {
+                register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                value: (self.0 & 0xFF).try_into().unwrap(),
+            },
+            0x7000..=0x7FFF => DecodedInstr::AddToRegister {
                 register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
                 value: (self.0 & 0xFF).try_into().unwrap(),
             },
