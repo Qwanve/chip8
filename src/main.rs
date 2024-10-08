@@ -141,8 +141,8 @@ impl State<'_> {
                     }
                 }
             }
-            DecodedInstr::IllegalInstruction => {
-                panic!("Recieved illegal instruction");
+            DecodedInstr::IllegalInstruction(instr) => {
+                panic!("Recieved illegal instruction: {instr:X}");
             }
         }
     }
@@ -157,7 +157,7 @@ enum DecodedInstr {
     LoadRegister { register: u4, value: u8 },
     LoadIRegister { value: u12 },
     DrawSprite { x: u4, y: u4, bytes: u4 },
-    IllegalInstruction,
+    IllegalInstruction(u16),
 }
 
 impl Instr {
@@ -179,7 +179,7 @@ impl Instr {
                 y: ((self.0 & 0x00F0) >> 4).try_into().unwrap(),
                 bytes: (self.0 & 0x000F).try_into().unwrap(),
             },
-            _ => DecodedInstr::IllegalInstruction,
+            _ => DecodedInstr::IllegalInstruction(self.0),
         }
     }
 }
