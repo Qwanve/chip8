@@ -203,7 +203,7 @@ impl State {
                 *reg = reg.wrapping_add(value);
             }
             CopyRegister { x, y } => {
-                info!("Copying register {x} to register {y}");
+                info!("Copying register {y} to register {x}");
                 let y = self.registers[y];
                 let x = &mut self.registers[x];
                 *x = y;
@@ -239,7 +239,7 @@ impl State {
                 }
             }
             AddRegisters { x, y } => {
-                info!("Adding register {x} to register {y}");
+                info!("Adding register {y} to register {x}");
                 let y = self.registers[y];
                 let x = &mut self.registers[x];
                 let (result, carry) = x.overflowing_add(y);
@@ -295,27 +295,35 @@ impl State {
             DrawSprite { x, y, bytes } => {
                 let x = self.registers[x];
                 let y = self.registers[y];
-                info!("Drawing sprint at {x},{y} with size {bytes}");
                 let bytes = u8::from(bytes);
-                let x = x % 0x3F;
-                let y = y % 0x1F;
+                let x = x % 0x40;
+                let y = y % 0x20;
+                info!("Drawing sprite at {x},{y} with size {bytes}");
 
+                let mut vram = self.vram.lock().unwrap();
+                let mut collision = false;
                 for b in 0..bytes {
                     //Drawing past the bottom
                     if y + b >= 32 {
+                        debug!("Drawing past the bottom of the frame");
                         break;
                     }
                     let byte = self.memory[self.vi + u16::from(b)];
                     debug!("Drawing line {b}, value: {byte:X}");
                     let bits = byte.view_bits::<Msb0>();
                     let start = usize::from(y + b) * 64 + usize::from(x);
-                    let end = usize::from(y + b) * 64 + usize::from(min(x + 8, 63));
+                    let end = usize::from(y + b) * 64 + min(usize::from(x) + 8, 63);
                     {
-                        let mut vram = self.vram.lock().unwrap();
                         let write_area = &mut vram[start..=end];
-                        write_area.into_iter().zip(bits).for_each(|(v, s)| *v ^= *s);
+                        write_area.into_iter().zip(bits).for_each(|(v, s)| {
+                            if *v && *s {
+                                collision = true;
+                            }
+                            *v ^= *s
+                        });
                     }
                 }
+                self.registers[u4::new(0xF)] = collision as u8;
             }
             SkipIfPressed { key } => {
                 info!("Skipping if key in register {key} is pressed");
