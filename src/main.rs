@@ -73,6 +73,7 @@ impl IndexMut<u16> for Memory {
 #[derive(Copy, Clone, Debug)]
 enum ExitReason {
     InfiniteLoop,
+    WaitingForKeyPress,
     IllegalInstruction,
 }
 
@@ -104,6 +105,7 @@ struct State {
     vi: u16,
     keypad: Arc<Mutex<Keypad>>,
     delay_timer: Arc<Mutex<u8>>,
+    last_key_press: Option<u8>,
 }
 impl State {
     fn new(
@@ -121,6 +123,7 @@ impl State {
             vi: 0,
             keypad,
             delay_timer,
+            last_key_press: None,
         }
     }
 
@@ -129,8 +132,24 @@ impl State {
             let instr = self.fetch();
             debug!("{:04X}: {instr:04X?}", self.pc);
             let instr = instr.decode();
-            self.execute(instr)?;
             //TODO: wait for keypress / Draw sprite?
+            match self.execute(instr) {
+                ControlFlow::Break(ExitReason::WaitingForKeyPress) => {
+                    self.pc -= 2;
+                    //TODO Verify behavior
+                    loop {
+                        let key_pressed = self.keypad.lock().unwrap().first_pressed();
+
+                        if let Some(key) = key_pressed {
+                            self.last_key_press = Some(key);
+                        } else if self.last_key_press.is_some() {
+                            break;
+                        }
+                        smol::future::yield_now().await;
+                    }
+                }
+                reason => reason?,
+            };
             smol::future::yield_now().await;
         }
     }
@@ -356,12 +375,14 @@ impl State {
             }
             WaitForKeyPress { register } => {
                 info!("Waiting for keypress to put in register {register}");
-                if let Some(key) = self.keypad.lock().unwrap().first_pressed() {
-                    debug!("Key pressed: {key}");
+
+                if let Some(key) = self.last_key_press {
+                    debug!("Got key press: {key}");
                     self.registers[register] = key;
+                    self.last_key_press = None;
                 } else {
-                    debug!("Still waiting");
-                    self.pc -= 2;
+                    debug!("Registering wait for key press");
+                    return ControlFlow::Break(ExitReason::WaitingForKeyPress);
                 }
             }
             SetDelayTimer { register } => {
