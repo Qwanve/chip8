@@ -212,18 +212,21 @@ impl State<'_, '_, '_> {
                 let y = self.registers[y];
                 let x = &mut self.registers[x];
                 *x |= y;
+                self.registers[u4::new(0xF)] = 0;
             }
             AndRegisters { x, y } => {
                 info!("Adding register {x} with register {y}");
                 let y = self.registers[y];
                 let x = &mut self.registers[x];
                 *x &= y;
+                self.registers[u4::new(0xF)] = 0;
             }
             XorRegisters { x, y } => {
                 info!("Xoring register {x} with register {y}");
                 let y = self.registers[y];
                 let x = &mut self.registers[x];
                 *x ^= y;
+                self.registers[u4::new(0xF)] = 0;
             }
             SkipIfRegisterNotEqual { x, y } => {
                 info!("Skipping if register {x} is not equal to register {y}");
