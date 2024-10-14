@@ -11,6 +11,7 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 use smol::Timer;
+use std::ops::ControlFlow;
 use std::sync::Mutex;
 use ux::u12;
 use ux::u4;
@@ -28,8 +29,9 @@ fn main() {
     smol::block_on(async {
         select! {
             _ = disp => return,
-            _ = state.run().fuse() => {},
+            reason = state.run().fuse() => error!("Core returned: {reason:?}"),
         };
+        disp.await;
     });
 }
 
@@ -58,6 +60,12 @@ impl IndexMut<u16> for Memory {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+enum ExitReason {
+    InfiniteLoop,
+    IllegalInstruction,
+}
+
 #[derive(Clone)]
 struct State<'vram> {
     pc: u16,
@@ -77,14 +85,14 @@ impl State<'_> {
         }
     }
 
-    async fn run(&mut self) -> ! {
+    async fn run(&mut self) -> ControlFlow<ExitReason> {
         loop {
             let instr = self.fetch();
             info!("{:04X}: {instr:04X?}", self.pc);
             let instr = instr.decode();
-            self.execute(instr);
             futures::pending!();
             // Timer::after(Duration::from_millis(30)).await;
+            self.execute(instr)?;
         }
     }
 
@@ -95,7 +103,7 @@ impl State<'_> {
         ]))
     }
 
-    fn execute(&mut self, instr: DecodedInstr) {
+    fn execute(&mut self, instr: DecodedInstr) -> ControlFlow<ExitReason> {
         self.pc += 2;
         use DecodedInstr::*;
         match instr {
@@ -106,6 +114,9 @@ impl State<'_> {
             }
             Jump { address } => {
                 debug!("Jumping to {address:X}");
+                if self.pc - 2 == address.into() {
+                    return ControlFlow::Break(ExitReason::InfiniteLoop);
+                }
                 self.pc = address.into();
             }
             SkipIfEqual { register, value } => {
@@ -160,8 +171,10 @@ impl State<'_> {
             }
             DecodedInstr::IllegalInstruction(instr) => {
                 error!("Recieved illegal instruction: {instr:04X}");
+                return ControlFlow::Break(ExitReason::IllegalInstruction);
             }
-        }
+        };
+        ControlFlow::Continue(())
     }
 }
 
