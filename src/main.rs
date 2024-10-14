@@ -67,11 +67,29 @@ enum ExitReason {
 }
 
 #[derive(Clone)]
+struct Registers([u8; 16]);
+
+impl Index<u4> for Registers {
+    type Output = u8;
+    fn index(&self, idx: u4) -> &Self::Output {
+        trace!("Accessing register {idx:#X}");
+        &self.0[usize::from(u8::from(idx))]
+    }
+}
+
+impl IndexMut<u4> for Registers {
+    fn index_mut(&mut self, idx: u4) -> &mut Self::Output {
+        trace!("Accessing register {idx:#X}");
+        &mut self.0[usize::from(u8::from(idx))]
+    }
+}
+
+#[derive(Clone)]
 struct State<'vram> {
     pc: u16,
     vram: &'vram Mutex<[bool; 64 * 32]>,
     memory: Memory,
-    registers: [u8; 16],
+    registers: Registers,
     vi: u16,
 }
 impl State<'_> {
@@ -80,7 +98,7 @@ impl State<'_> {
             pc: 0x200,
             vram,
             memory: Memory { rom },
-            registers: [0; 16],
+            registers: Registers([0; 16]),
             vi: 0,
         }
     }
@@ -120,20 +138,20 @@ impl State<'_> {
                 self.pc = address.into();
             }
             SkipIfEqual { register, value } => {
-                let reg = self.registers[usize::from(u16::from(register))];
                 info!("Skipping if register {register} is {value:X}");
+                let reg = self.registers[register];
                 if reg == value {
                     trace!("Skipped");
                     self.pc += 2;
                 }
             }
             LoadRegister { register, value } => {
-                self.registers[usize::from(u16::from(register))] = value;
                 info!("Load register {register} with {value:02X}");
+                self.registers[register] = value;
             }
             AddToRegister { register, value } => {
-                let reg = &mut self.registers[usize::from(u16::from(register))];
                 info!("Adding {value:02X} to register {register}");
+                let reg = &mut self.registers[register];
                 *reg = reg.wrapping_add(value);
             }
             LoadIRegister { value } => {
@@ -141,13 +159,13 @@ impl State<'_> {
                 self.vi = value.into();
             }
             JumpWithOffset { address } => {
-                let reg = self.registers[0];
                 info!("Jumping to address {address:04X} + V0");
+                let reg = self.registers[u4::new(0)];
                 self.pc = u16::from(address).wrapping_add(u16::from(reg));
             }
             DrawSprite { x, y, bytes } => {
-                let x = self.registers[usize::from(u16::from(x))];
-                let y = self.registers[usize::from(u16::from(y))];
+                let x = self.registers[x];
+                let y = self.registers[y];
                 info!("Drawing sprint at {x},{y} with size {bytes}");
                 let bytes = u8::from(bytes);
                 let x = x % 0x3F;
