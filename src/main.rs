@@ -22,7 +22,7 @@ fn main() {
     let file = std::env::args()
         .nth(1)
         .expect("Expected rom as first arguement");
-    debug!("Opening rom");
+    info!("Opening rom");
     let rom = std::fs::read(file).unwrap();
     let mut state = State::new(&vram, rom);
     let mut disp = pin!(sdl2(&vram).fuse());
@@ -88,7 +88,7 @@ impl State<'_> {
     async fn run(&mut self) -> ControlFlow<ExitReason> {
         loop {
             let instr = self.fetch();
-            info!("{:04X}: {instr:04X?}", self.pc);
+            debug!("{:04X}: {instr:04X?}", self.pc);
             let instr = instr.decode();
             futures::pending!();
             // Timer::after(Duration::from_millis(30)).await;
@@ -108,47 +108,47 @@ impl State<'_> {
         use DecodedInstr::*;
         match instr {
             ClearScreen => {
-                debug!("ClearScreen");
+                info!("Clearing Screen");
                 let mut vram = self.vram.lock().unwrap();
                 *vram = [false; 64 * 32];
             }
             Jump { address } => {
-                debug!("Jumping to {address:X}");
+                info!("Jumping to {address:03X}");
                 if self.pc - 2 == address.into() {
                     return ControlFlow::Break(ExitReason::InfiniteLoop);
                 }
                 self.pc = address.into();
             }
             SkipIfEqual { register, value } => {
-                debug!("Skipping if register {register} is {value:X}");
                 let reg = self.registers[usize::from(u16::from(register))];
+                info!("Skipping if register {register} is {value:X}");
                 if reg == value {
                     trace!("Skipped");
                     self.pc += 2;
                 }
             }
             LoadRegister { register, value } => {
-                debug!("Load register {register} with {value:02X}");
                 self.registers[usize::from(u16::from(register))] = value;
+                info!("Load register {register} with {value:02X}");
             }
             AddToRegister { register, value } => {
-                debug!("Adding {value:02X} to register {register}");
                 let reg = &mut self.registers[usize::from(u16::from(register))];
+                info!("Adding {value:02X} to register {register}");
                 *reg = reg.wrapping_add(value);
             }
             LoadIRegister { value } => {
-                debug!("Load register I with {value:02X}");
+                info!("Load register I with {value:02X}");
                 self.vi = value.into();
             }
             JumpWithOffset { address } => {
-                debug!("Jumping to address {address:04X} + V0");
                 let reg = self.registers[0];
+                info!("Jumping to address {address:04X} + V0");
                 self.pc = u16::from(address).wrapping_add(u16::from(reg));
             }
             DrawSprite { x, y, bytes } => {
                 let x = self.registers[usize::from(u16::from(x))];
                 let y = self.registers[usize::from(u16::from(y))];
-                debug!("Drawing sprint at {x},{y} with size {bytes}");
+                info!("Drawing sprint at {x},{y} with size {bytes}");
                 let bytes = u8::from(bytes);
                 let x = x % 0x3F;
                 let y = y % 0x1F;
@@ -229,7 +229,7 @@ impl Instr {
 }
 
 async fn sdl2(vram: &Mutex<[bool; 64 * 32]>) {
-    debug!("Warming up sdl system");
+    info!("Warming up sdl system");
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
