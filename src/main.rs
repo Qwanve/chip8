@@ -20,16 +20,18 @@ fn main() {
     env_logger::init();
     let vram = Mutex::<[bool; 64 * 32]>::new([false; 64 * 32]);
     let keypad = Mutex::new(Keypad([false; 16]));
+    let delay_timer = Mutex::new(0);
     let file = std::env::args()
         .nth(1)
         .expect("Expected rom as first arguement");
     info!("Opening rom");
     let rom = std::fs::read(file).unwrap();
-    let mut state = State::new(&vram, &keypad, rom);
+    let mut state = State::new(&vram, &keypad, &delay_timer, rom);
     let mut disp = pin!(sdl2(&vram, &keypad).fuse());
     smol::block_on(async {
         select! {
             _ = disp => return,
+            _ = handle_delay_timer(&delay_timer).fuse() => {},
             reason = state.run().fuse() => error!("Core returned: {reason:?}"),
         };
         disp.await;
@@ -89,7 +91,7 @@ impl IndexMut<u4> for Registers {
 }
 
 #[derive(Clone)]
-struct State<'vram, 'keypad> {
+struct State<'vram, 'keypad, 'dt> {
     pc: u16,
     vram: &'vram Mutex<[bool; 64 * 32]>,
     memory: Memory,
@@ -97,13 +99,15 @@ struct State<'vram, 'keypad> {
     registers: Registers,
     vi: u16,
     keypad: &'keypad Mutex<Keypad>,
+    delay_timer: &'dt Mutex<u8>,
 }
-impl State<'_, '_> {
-    fn new<'vram, 'keypad>(
+impl State<'_, '_, '_> {
+    fn new<'vram, 'keypad, 'dt>(
         vram: &'vram Mutex<[bool; 64 * 32]>,
         keypad: &'keypad Mutex<Keypad>,
+        delay_timer: &'dt Mutex<u8>,
         rom: Vec<u8>,
-    ) -> State<'vram, 'keypad> {
+    ) -> State<'vram, 'keypad, 'dt> {
         State {
             pc: 0x200,
             vram,
@@ -112,6 +116,7 @@ impl State<'_, '_> {
             registers: Registers([0; 16]),
             vi: 0,
             keypad,
+            delay_timer,
         }
     }
 
@@ -327,6 +332,14 @@ impl State<'_, '_> {
                     self.pc += 2;
                 }
             }
+            StoreDelayTimer { register } => {
+                info!("Storing delay timer in register {register}");
+                self.registers[register] = *self.delay_timer.lock().unwrap();
+            }
+            SetDelayTimer { register } => {
+                info!("Setting delay timer to register {register}");
+                *self.delay_timer.lock().unwrap() = self.registers[register];
+            }
             AddToIRegister { register } => {
                 info!("Adding register {register} to I");
                 self.vi += u16::from(self.registers[register]);
@@ -394,6 +407,8 @@ enum DecodedInstr {
     DrawSprite { x: u4, y: u4, bytes: u4 },
     SkipIfPressed { key: u4 },
     SkipIfNotPressed { key: u4 },
+    StoreDelayTimer { register: u4 },
+    SetDelayTimer { register: u4 },
     AddToIRegister { register: u4 },
     BinaryCodedDecimal { register: u4 },
     StoreRegisters { register: u4 },
@@ -497,6 +512,12 @@ impl Instr {
                 _ => DecodedInstr::IllegalInstruction(self.0),
             },
             0xF000..=0xFFFF => match u8::try_from(self.0 & 0xFF).unwrap() {
+                0x07 => DecodedInstr::StoreDelayTimer {
+                    register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                },
+                0x15 => DecodedInstr::SetDelayTimer {
+                    register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                },
                 0x1E => DecodedInstr::AddToIRegister {
                     register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
                 },
@@ -513,6 +534,15 @@ impl Instr {
             },
             _ => DecodedInstr::IllegalInstruction(self.0),
         }
+    }
+}
+
+async fn handle_delay_timer(delay_timer: &Mutex<u8>) {
+    loop {
+        let mut delay_timer = delay_timer.lock().unwrap();
+        *delay_timer = delay_timer.saturating_sub(1);
+        drop(delay_timer);
+        Timer::after(Duration::from_secs_f64(1f64 / 60f64)).await;
     }
 }
 
