@@ -12,26 +12,27 @@ use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 use smol::Timer;
 use std::ops::ControlFlow;
+use std::sync::Arc;
 use std::sync::Mutex;
 use ux::u12;
 use ux::u4;
 
 fn main() {
     env_logger::init();
-    let vram = Mutex::<[bool; 64 * 32]>::new([false; 64 * 32]);
-    let keypad = Mutex::new(Keypad([false; 16]));
-    let delay_timer = Mutex::new(0);
+    let vram = Arc::new(Mutex::<[bool; 64 * 32]>::new([false; 64 * 32]));
+    let keypad = Arc::new(Mutex::new(Keypad([false; 16])));
+    let delay_timer = Arc::new(Mutex::new(0));
     let file = std::env::args()
         .nth(1)
         .expect("Expected rom as first arguement");
     info!("Opening rom");
     let rom = std::fs::read(file).unwrap();
-    let mut state = State::new(&vram, &keypad, &delay_timer, rom);
-    let mut disp = pin!(sdl2(&vram, &keypad).fuse());
+    let mut state = State::new(vram.clone(), keypad.clone(), delay_timer.clone(), rom);
+    let mut disp = pin!(sdl2(vram.clone(), keypad.clone()).fuse());
     smol::block_on(async {
         select! {
             _ = disp => return,
-            _ = handle_delay_timer(&delay_timer).fuse() => {},
+            _ = handle_delay_timer(delay_timer).fuse() => {},
             reason = state.run().fuse() => error!("Core returned: {reason:?}"),
         };
         disp.await;
@@ -91,23 +92,23 @@ impl IndexMut<u4> for Registers {
 }
 
 #[derive(Clone)]
-struct State<'vram, 'keypad, 'dt> {
+struct State {
     pc: u16,
-    vram: &'vram Mutex<[bool; 64 * 32]>,
+    vram: Arc<Mutex<[bool; 64 * 32]>>,
     memory: Memory,
     stack: Vec<u16>,
     registers: Registers,
     vi: u16,
-    keypad: &'keypad Mutex<Keypad>,
-    delay_timer: &'dt Mutex<u8>,
+    keypad: Arc<Mutex<Keypad>>,
+    delay_timer: Arc<Mutex<u8>>,
 }
-impl State<'_, '_, '_> {
-    fn new<'vram, 'keypad, 'dt>(
-        vram: &'vram Mutex<[bool; 64 * 32]>,
-        keypad: &'keypad Mutex<Keypad>,
-        delay_timer: &'dt Mutex<u8>,
+impl State {
+    fn new(
+        vram: Arc<Mutex<[bool; 64 * 32]>>,
+        keypad: Arc<Mutex<Keypad>>,
+        delay_timer: Arc<Mutex<u8>>,
         rom: Vec<u8>,
-    ) -> State<'vram, 'keypad, 'dt> {
+    ) -> State {
         State {
             pc: 0x200,
             vram,
@@ -555,7 +556,7 @@ impl Instr {
     }
 }
 
-async fn handle_delay_timer(delay_timer: &Mutex<u8>) {
+async fn handle_delay_timer(delay_timer: Arc<Mutex<u8>>) {
     loop {
         let mut delay_timer = delay_timer.lock().unwrap();
         *delay_timer = delay_timer.saturating_sub(1);
@@ -564,7 +565,7 @@ async fn handle_delay_timer(delay_timer: &Mutex<u8>) {
     }
 }
 
-async fn sdl2(vram: &Mutex<[bool; 64 * 32]>, keypad: &Mutex<Keypad>) {
+async fn sdl2(vram: Arc<Mutex<[bool; 64 * 32]>>, keypad: Arc<Mutex<Keypad>>) {
     info!("Warming up sdl system");
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
