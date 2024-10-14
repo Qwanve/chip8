@@ -117,16 +117,16 @@ impl State<'_> {
                 }
             }
             LoadRegister { register, value } => {
-                debug!("Load register {register} with {value}");
+                debug!("Load register {register} with {value:02X}");
                 self.registers[usize::from(u16::from(register))] = value;
             }
             AddToRegister { register, value } => {
-                debug!("Adding {value:X} to register {register}");
+                debug!("Adding {value:02X} to register {register}");
                 let reg = &mut self.registers[usize::from(u16::from(register))];
                 *reg = reg.wrapping_add(value);
             }
             LoadIRegister { value } => {
-                debug!("Load register I with {value}");
+                debug!("Load register I with {value:02X}");
                 self.vi = value.into();
             }
             JumpWithOffset { address } => {
@@ -138,29 +138,28 @@ impl State<'_> {
                 let x = self.registers[usize::from(u16::from(x))];
                 let y = self.registers[usize::from(u16::from(y))];
                 debug!("Drawing sprint at {x},{y} with size {bytes}");
-                let i = usize::from(self.vi);
                 let bytes = u8::from(bytes);
                 let x = x % 0x3F;
                 let y = y % 0x1F;
-                println!("i:{i}, bytes:{bytes}");
-                {
-                    let mut vram = self.vram.lock().unwrap();
-                    for b in 0..bytes {
-                        if y + b > 32 {
-                            break;
-                        }
-                        let byte = self.memory[self.vi + u16::from(b)];
-                        debug!("Drawing line {b}, value: {byte:X}");
-                        let bits = byte.view_bits::<Msb0>();
-                        let start = usize::from(y + b) * 64 + usize::from(x);
-                        let end = usize::from(y + b) * 64 + usize::from(min(x + 8, 63));
+
+                for b in 0..bytes {
+                    if y + b > 32 {
+                        break;
+                    }
+                    let byte = self.memory[self.vi + u16::from(b)];
+                    debug!("Drawing line {b}, value: {byte:X}");
+                    let bits = byte.view_bits::<Msb0>();
+                    let start = usize::from(y + b) * 64 + usize::from(x);
+                    let end = usize::from(y + b) * 64 + usize::from(min(x + 8, 63));
+                    {
+                        let mut vram = self.vram.lock().unwrap();
                         let write_area = &mut vram[start..=end];
                         write_area.into_iter().zip(bits).for_each(|(v, s)| *v ^= *s);
                     }
                 }
             }
             DecodedInstr::IllegalInstruction(instr) => {
-                panic!("Recieved illegal instruction: {instr:X}");
+                error!("Recieved illegal instruction: {instr:04X}");
             }
         }
     }
