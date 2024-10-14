@@ -127,8 +127,7 @@ impl State {
             debug!("{:04X}: {instr:04X?}", self.pc);
             let instr = instr.decode();
             self.execute(instr)?;
-            // futures::pending!();
-            Timer::after(Duration::from_secs_f32(1f32 / 100f32)).await;
+            smol::future::yield_now().await;
         }
     }
 
@@ -299,6 +298,7 @@ impl State {
                 let x = x % 0x40;
                 let y = y % 0x20;
                 info!("Drawing sprite at {x},{y} with size {bytes}");
+                std::thread::sleep(Duration::from_secs_f32(1f32 / 60f32));
 
                 let mut vram = self.vram.lock().unwrap();
                 let mut collision = false;
