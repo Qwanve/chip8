@@ -89,6 +89,7 @@ struct State<'vram> {
     pc: u16,
     vram: &'vram Mutex<[bool; 64 * 32]>,
     memory: Memory,
+    stack: Vec<u16>,
     registers: Registers,
     vi: u16,
 }
@@ -98,6 +99,7 @@ impl State<'_> {
             pc: 0x200,
             vram,
             memory: Memory { rom },
+            stack: Vec::new(),
             registers: Registers([0; 16]),
             vi: 0,
         }
@@ -130,6 +132,14 @@ impl State<'_> {
                 let mut vram = self.vram.lock().unwrap();
                 *vram = [false; 64 * 32];
             }
+            Return => {
+                info!("Return");
+                if let Some(addr) = self.stack.pop() {
+                    self.pc = addr;
+                } else {
+                    warn!("Return without address on stack");
+                }
+            }
             Jump { address } => {
                 info!("Jumping to {address:03X}");
                 if self.pc - 2 == address.into() {
@@ -137,10 +147,32 @@ impl State<'_> {
                 }
                 self.pc = address.into();
             }
+            Call { address } => {
+                info!("Call to address {address:03X}");
+                self.stack.push(self.pc);
+                self.pc = u16::from(address);
+            }
             SkipIfEqual { register, value } => {
                 info!("Skipping if register {register} is {value:X}");
                 let reg = self.registers[register];
                 if reg == value {
+                    trace!("Skipped");
+                    self.pc += 2;
+                }
+            }
+            SkipIfNotEqual { register, value } => {
+                info!("Skipping if register {register} is not {value:X}");
+                let reg = self.registers[register];
+                if reg != value {
+                    trace!("Skipped");
+                    self.pc += 2;
+                }
+            }
+            SkipIfRegisterEqual { x, y } => {
+                info!("Skipping if register {x} is equal to register {y}");
+                let x = self.registers[x];
+                let y = self.registers[y];
+                if x == y {
                     trace!("Skipped");
                     self.pc += 2;
                 }
@@ -153,6 +185,84 @@ impl State<'_> {
                 info!("Adding {value:02X} to register {register}");
                 let reg = &mut self.registers[register];
                 *reg = reg.wrapping_add(value);
+            }
+            CopyRegister { x, y } => {
+                info!("Copying register {x} to register {y}");
+                let y = self.registers[y];
+                let x = &mut self.registers[x];
+                *x = y;
+            }
+            OrRegisters { x, y } => {
+                info!("Oring register {x} with register {y}");
+                let y = self.registers[y];
+                let x = &mut self.registers[x];
+                *x |= y;
+            }
+            AndRegisters { x, y } => {
+                info!("Adding register {x} with register {y}");
+                let y = self.registers[y];
+                let x = &mut self.registers[x];
+                *x &= y;
+            }
+            XorRegisters { x, y } => {
+                info!("Xoring register {x} with register {y}");
+                let y = self.registers[y];
+                let x = &mut self.registers[x];
+                *x ^= y;
+            }
+            SkipIfRegisterNotEqual { x, y } => {
+                info!("Skipping if register {x} is not equal to register {y}");
+                let x = self.registers[x];
+                let y = self.registers[y];
+                if x != y {
+                    trace!("Skipped");
+                    self.pc += 2;
+                }
+            }
+            AddRegisters { x, y } => {
+                info!("Adding register {x} to register {y}");
+                let y = self.registers[y];
+                let x = &mut self.registers[x];
+                let (result, carry) = x.overflowing_add(y);
+                *x = result;
+                let flags = &mut self.registers[u4::new(0xF)];
+                *flags = u8::from(carry);
+            }
+            SubtractRegisters { x, y } => {
+                info!("Subtracting register {y} from register {x}");
+                let y = self.registers[y];
+                let x = &mut self.registers[x];
+                let (result, carry) = x.overflowing_sub(y);
+                *x = result;
+                let flags = &mut self.registers[u4::new(0xF)];
+                *flags = u8::from(carry);
+            }
+            ShiftRight { x, y } => {
+                info!("Setting register {x} to shifted register {y}");
+                let y = self.registers[y];
+                let x = &mut self.registers[x];
+                let lsb = y & 0b1;
+                *x = y >> 1;
+                let flags = &mut self.registers[u4::new(0xF)];
+                *flags = lsb;
+            }
+            SubtractRegistersReverse { x, y } => {
+                info!("Subtracting register {y} from register {x}");
+                let y = self.registers[y];
+                let x = &mut self.registers[x];
+                let (result, carry) = y.overflowing_sub(*x);
+                *x = result;
+                let flags = &mut self.registers[u4::new(0xF)];
+                *flags = u8::from(carry);
+            }
+            ShiftLeft { x, y } => {
+                info!("Setting register {x} to shifted register {y}");
+                let y = self.registers[y];
+                let x = &mut self.registers[x];
+                let msb = (y & 0b1000_0000) >> 7;
+                *x = y << 1;
+                let flags = &mut self.registers[u4::new(0xF)];
+                *flags = msb;
             }
             LoadIRegister { value } => {
                 info!("Load register I with {value:02X}");
@@ -187,6 +297,36 @@ impl State<'_> {
                     }
                 }
             }
+            AddToIRegister { register } => {
+                info!("Adding register {register} to I");
+                self.vi += u16::from(self.registers[register]);
+            }
+            BinaryCodedDecimal { register } => {
+                info!("Converting register {register} to decimal");
+                //TODO: Better algorithm
+                let value = self.registers[register];
+                let decimal = format!("{value:03}");
+                for (idx, digit) in decimal.chars().take(3).enumerate() {
+                    let idx = u16::try_from(idx).unwrap();
+                    let digit = u8::try_from(digit.to_digit(10).unwrap()).unwrap();
+                    self.memory[self.vi + idx] = digit;
+                }
+                // self.vi += 3;
+            }
+            StoreRegisters { register } => {
+                info!("Storing registers 0 - {register}");
+                for x in 0..=u8::from(register) {
+                    self.memory[self.vi + u16::from(x)] = self.registers[u4::new(x)];
+                }
+                self.vi += u16::from(register) + 1;
+            }
+            LoadRegisters { register } => {
+                info!("Loading registers 0 - {register}");
+                for x in 0..=u8::from(register) {
+                    self.registers[u4::new(x)] = self.memory[self.vi + u16::from(x)];
+                }
+                self.vi += u16::from(register) + 1;
+            }
             DecodedInstr::IllegalInstruction(instr) => {
                 error!("Recieved illegal instruction: {instr:04X}");
                 return ControlFlow::Break(ExitReason::IllegalInstruction);
@@ -201,13 +341,31 @@ struct Instr(u16);
 
 enum DecodedInstr {
     ClearScreen,
+    Return,
     Jump { address: u12 },
+    Call { address: u12 },
     SkipIfEqual { register: u4, value: u8 },
+    SkipIfNotEqual { register: u4, value: u8 },
+    SkipIfRegisterEqual { x: u4, y: u4 },
     LoadRegister { register: u4, value: u8 },
+    CopyRegister { x: u4, y: u4 },
+    OrRegisters { x: u4, y: u4 },
+    AndRegisters { x: u4, y: u4 },
+    XorRegisters { x: u4, y: u4 },
     AddToRegister { register: u4, value: u8 },
+    SkipIfRegisterNotEqual { x: u4, y: u4 },
+    AddRegisters { x: u4, y: u4 },
+    SubtractRegisters { x: u4, y: u4 },
+    ShiftRight { x: u4, y: u4 },
+    SubtractRegistersReverse { x: u4, y: u4 },
+    ShiftLeft { x: u4, y: u4 },
     LoadIRegister { value: u12 },
     JumpWithOffset { address: u12 },
     DrawSprite { x: u4, y: u4, bytes: u4 },
+    AddToIRegister { register: u4 },
+    BinaryCodedDecimal { register: u4 },
+    StoreRegisters { register: u4 },
+    LoadRegisters { register: u4 },
     IllegalInstruction(u16),
 }
 
@@ -215,12 +373,24 @@ impl Instr {
     fn decode(self) -> DecodedInstr {
         match self.0 {
             0x00E0 => DecodedInstr::ClearScreen,
+            0x00EE => DecodedInstr::Return,
             0x1000..=0x1FFF => DecodedInstr::Jump {
+                address: (self.0 & 0x0FFF).try_into().unwrap(),
+            },
+            0x2000..=0x2FFF => DecodedInstr::Call {
                 address: (self.0 & 0x0FFF).try_into().unwrap(),
             },
             0x3000..=0x3FFF => DecodedInstr::SkipIfEqual {
                 register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
                 value: (self.0 & 0xFF).try_into().unwrap(),
+            },
+            0x4000..=0x4FFF => DecodedInstr::SkipIfNotEqual {
+                register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                value: (self.0 & 0xFF).try_into().unwrap(),
+            },
+            0x5000..=0x5FFF if self.0 & 0xF == 0 => DecodedInstr::SkipIfRegisterEqual {
+                x: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                y: ((self.0 & 0x00F0) >> 4).try_into().unwrap(),
             },
             0x6000..=0x6FFF => DecodedInstr::LoadRegister {
                 register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
@@ -229,6 +399,50 @@ impl Instr {
             0x7000..=0x7FFF => DecodedInstr::AddToRegister {
                 register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
                 value: (self.0 & 0xFF).try_into().unwrap(),
+            },
+            0x8000..=0x8FFF => match self.0 & 0xF {
+                0x0 => DecodedInstr::CopyRegister {
+                    x: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                    y: ((self.0 & 0x00F0) >> 4).try_into().unwrap(),
+                },
+                0x1 => DecodedInstr::OrRegisters {
+                    x: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                    y: ((self.0 & 0x00F0) >> 4).try_into().unwrap(),
+                },
+                0x2 => DecodedInstr::AndRegisters {
+                    x: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                    y: ((self.0 & 0x00F0) >> 4).try_into().unwrap(),
+                },
+                0x3 => DecodedInstr::XorRegisters {
+                    x: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                    y: ((self.0 & 0x00F0) >> 4).try_into().unwrap(),
+                },
+                0x4 => DecodedInstr::AddRegisters {
+                    x: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                    y: ((self.0 & 0x00F0) >> 4).try_into().unwrap(),
+                },
+                0x5 => DecodedInstr::SubtractRegisters {
+                    x: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                    y: ((self.0 & 0x00F0) >> 4).try_into().unwrap(),
+                },
+                0x6 => DecodedInstr::ShiftRight {
+                    x: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                    y: ((self.0 & 0x00F0) >> 4).try_into().unwrap(),
+                },
+                0x7 => DecodedInstr::SubtractRegistersReverse {
+                    x: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                    y: ((self.0 & 0x00F0) >> 4).try_into().unwrap(),
+                },
+                0xE => DecodedInstr::ShiftLeft {
+                    x: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                    y: ((self.0 & 0x00F0) >> 4).try_into().unwrap(),
+                },
+                0x8..=0xD | 0xF => DecodedInstr::IllegalInstruction(self.0),
+                0x10.. => unreachable!(),
+            },
+            0x9000..=0x9FFF if self.0 & 0xF == 0 => DecodedInstr::SkipIfRegisterNotEqual {
+                x: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                y: ((self.0 & 0x00F0) >> 4).try_into().unwrap(),
             },
             0xA000..=0xAFFF => DecodedInstr::LoadIRegister {
                 value: (self.0 & 0x0FFF).try_into().unwrap(),
@@ -240,6 +454,21 @@ impl Instr {
                 x: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
                 y: ((self.0 & 0x00F0) >> 4).try_into().unwrap(),
                 bytes: (self.0 & 0x000F).try_into().unwrap(),
+            },
+            0xF000..=0xFFFF => match u8::try_from(self.0 & 0xFF).unwrap() {
+                0x1E => DecodedInstr::AddToIRegister {
+                    register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                },
+                0x33 => DecodedInstr::BinaryCodedDecimal {
+                    register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                },
+                0x55 => DecodedInstr::StoreRegisters {
+                    register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                },
+                0x65 => DecodedInstr::LoadRegisters {
+                    register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                },
+                _ => DecodedInstr::IllegalInstruction(self.0),
             },
             _ => DecodedInstr::IllegalInstruction(self.0),
         }
