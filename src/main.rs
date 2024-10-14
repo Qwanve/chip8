@@ -19,13 +19,14 @@ use ux::u4;
 fn main() {
     env_logger::init();
     let vram = Mutex::<[bool; 64 * 32]>::new([false; 64 * 32]);
+    let keypad = Mutex::new(Keypad([false; 16]));
     let file = std::env::args()
         .nth(1)
         .expect("Expected rom as first arguement");
     info!("Opening rom");
     let rom = std::fs::read(file).unwrap();
-    let mut state = State::new(&vram, rom);
-    let mut disp = pin!(sdl2(&vram).fuse());
+    let mut state = State::new(&vram, &keypad, rom);
+    let mut disp = pin!(sdl2(&vram, &keypad).fuse());
     smol::block_on(async {
         select! {
             _ = disp => return,
@@ -34,6 +35,9 @@ fn main() {
         disp.await;
     });
 }
+
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+struct Keypad([bool; 16]);
 
 #[derive(Clone)]
 struct Memory {
@@ -85,16 +89,21 @@ impl IndexMut<u4> for Registers {
 }
 
 #[derive(Clone)]
-struct State<'vram> {
+struct State<'vram, 'keypad> {
     pc: u16,
     vram: &'vram Mutex<[bool; 64 * 32]>,
     memory: Memory,
     stack: Vec<u16>,
     registers: Registers,
     vi: u16,
+    keypad: &'keypad Mutex<Keypad>,
 }
-impl State<'_> {
-    fn new<'vram>(vram: &'vram Mutex<[bool; 64 * 32]>, rom: Vec<u8>) -> State<'vram> {
+impl State<'_, '_> {
+    fn new<'vram, 'keypad>(
+        vram: &'vram Mutex<[bool; 64 * 32]>,
+        keypad: &'keypad Mutex<Keypad>,
+        rom: Vec<u8>,
+    ) -> State<'vram, 'keypad> {
         State {
             pc: 0x200,
             vram,
@@ -102,6 +111,7 @@ impl State<'_> {
             stack: Vec::new(),
             registers: Registers([0; 16]),
             vi: 0,
+            keypad,
         }
     }
 
@@ -297,6 +307,26 @@ impl State<'_> {
                     }
                 }
             }
+            SkipIfPressed { key } => {
+                info!("Skipping if key in register {key} is pressed");
+                let key = self.registers[key];
+                debug!("Key: {key}");
+                let pressed = self.keypad.lock().unwrap().is_pressed(key);
+                if pressed {
+                    trace!("Skipped");
+                    self.pc += 2;
+                }
+            }
+            SkipIfNotPressed { key } => {
+                info!("Skipping if key in register {key} is not pressed");
+                let key = self.registers[key];
+                debug!("Key: {key}");
+                let pressed = self.keypad.lock().unwrap().is_pressed(key);
+                if !pressed {
+                    trace!("Skipped");
+                    self.pc += 2;
+                }
+            }
             AddToIRegister { register } => {
                 info!("Adding register {register} to I");
                 self.vi += u16::from(self.registers[register]);
@@ -362,6 +392,8 @@ enum DecodedInstr {
     LoadIRegister { value: u12 },
     JumpWithOffset { address: u12 },
     DrawSprite { x: u4, y: u4, bytes: u4 },
+    SkipIfPressed { key: u4 },
+    SkipIfNotPressed { key: u4 },
     AddToIRegister { register: u4 },
     BinaryCodedDecimal { register: u4 },
     StoreRegisters { register: u4 },
@@ -455,6 +487,15 @@ impl Instr {
                 y: ((self.0 & 0x00F0) >> 4).try_into().unwrap(),
                 bytes: (self.0 & 0x000F).try_into().unwrap(),
             },
+            0xE000..=0xEFFF => match u8::try_from(self.0 & 0xFF).unwrap() {
+                0x9E => DecodedInstr::SkipIfPressed {
+                    key: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                },
+                0xA1 => DecodedInstr::SkipIfNotPressed {
+                    key: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                },
+                _ => DecodedInstr::IllegalInstruction(self.0),
+            },
             0xF000..=0xFFFF => match u8::try_from(self.0 & 0xFF).unwrap() {
                 0x1E => DecodedInstr::AddToIRegister {
                     register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
@@ -475,7 +516,7 @@ impl Instr {
     }
 }
 
-async fn sdl2(vram: &Mutex<[bool; 64 * 32]>) {
+async fn sdl2(vram: &Mutex<[bool; 64 * 32]>, keypad: &Mutex<Keypad>) {
     info!("Warming up sdl system");
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
@@ -501,6 +542,7 @@ async fn sdl2(vram: &Mutex<[bool; 64 * 32]>) {
         let start = std::time::Instant::now();
         canvas.clear();
         for event in event_pump.poll_iter() {
+            use Keycode::*;
             match event {
                 Event::Quit { .. }
                 | Event::KeyDown {
@@ -509,6 +551,38 @@ async fn sdl2(vram: &Mutex<[bool; 64 * 32]>) {
                 } => {
                     info!("Recieved quit. Shutting down");
                     return;
+                }
+                #[rustfmt::skip]
+                Event::KeyDown {
+                    keycode:
+                        keycode @ Some(
+                            | Num4 | Num5 | Num6 | Num7
+                            | R    | T    | Y    | U
+                            | F    | G    | H    | J
+                            | V    | B    | N    | M
+                        ),
+                    ..
+                } => {
+                    let keycode = keycode.unwrap();
+                    info!("Recieved keydown: {keycode}");
+                    keypad.lock().unwrap().press(keycode);
+
+                }
+                #[rustfmt::skip]
+                Event::KeyUp {
+                    keycode:
+                        keycode @ Some(
+                            | Num4 | Num5 | Num6 | Num7
+                            | R    | T    | Y    | U
+                            | F    | G    | H    | J
+                            | V    | B    | N    | M
+                        ),
+                    ..
+                } => {
+                    let keycode = keycode.unwrap();
+                    info!("Recieved keyup: {keycode}");
+                    keypad.lock().unwrap().release(keycode);
+
                 }
                 _ => {}
             }
@@ -532,5 +606,58 @@ async fn sdl2(vram: &Mutex<[bool; 64 * 32]>) {
         let end = std::time::Instant::now();
         let diff = (end - start).as_micros() as f64;
         trace!("FPS: {:.1}", 1f64 / (diff / 1000000.0));
+    }
+}
+
+impl Keypad {
+    fn press(&mut self, keycode: Keycode) -> &mut Self {
+        use Keycode::*;
+        match keycode {
+            Num4 => self.0[0] = true,
+            Num5 => self.0[1] = true,
+            Num6 => self.0[2] = true,
+            Num7 => self.0[3] = true,
+            R => self.0[4] = true,
+            T => self.0[5] = true,
+            Y => self.0[6] = true,
+            U => self.0[7] = true,
+            F => self.0[8] = true,
+            G => self.0[9] = true,
+            H => self.0[10] = true,
+            J => self.0[11] = true,
+            V => self.0[12] = true,
+            B => self.0[13] = true,
+            N => self.0[14] = true,
+            M => self.0[15] = true,
+            _ => {}
+        };
+        self
+    }
+    fn release(&mut self, keycode: Keycode) -> &mut Self {
+        use Keycode::*;
+        match keycode {
+            Num4 => self.0[0] = false,
+            Num5 => self.0[1] = false,
+            Num6 => self.0[2] = false,
+            Num7 => self.0[3] = false,
+            R => self.0[4] = false,
+            T => self.0[5] = false,
+            Y => self.0[6] = false,
+            U => self.0[7] = false,
+            F => self.0[8] = false,
+            G => self.0[9] = false,
+            H => self.0[10] = false,
+            J => self.0[11] = false,
+            V => self.0[12] = false,
+            B => self.0[13] = false,
+            N => self.0[14] = false,
+            M => self.0[15] = false,
+            _ => {}
+        };
+        self
+    }
+
+    fn is_pressed(&self, key: u8) -> bool {
+        self.0[key as usize]
     }
 }
