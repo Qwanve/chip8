@@ -50,8 +50,10 @@ struct Memory {
 impl Index<u16> for Memory {
     type Output = u8;
     fn index(&self, idx: u16) -> &Self::Output {
+        //TODO: Fonts
         trace!("Accessing memory {idx:#X}");
         match idx {
+            0x1FF => &0,
             0x200.. => &self.rom[usize::from(idx) - 0x200],
             _ => todo!(),
         }
@@ -60,6 +62,7 @@ impl Index<u16> for Memory {
 impl IndexMut<u16> for Memory {
     fn index_mut(&mut self, idx: u16) -> &mut Self::Output {
         trace!("Accessing memory {idx:#X}");
+        //TODO: Fonts
         match idx {
             0x200.. => &mut self.rom[usize::from(idx) - 0x200],
             _ => todo!(),
@@ -127,6 +130,7 @@ impl State {
             debug!("{:04X}: {instr:04X?}", self.pc);
             let instr = instr.decode();
             self.execute(instr)?;
+            //TODO: wait for keypress / Draw sprite?
             smol::future::yield_now().await;
         }
     }
@@ -139,6 +143,7 @@ impl State {
     }
 
     fn execute(&mut self, instr: DecodedInstr) -> ControlFlow<ExitReason> {
+        //TODO: Break this function up?
         self.pc += 2;
         use DecodedInstr::*;
         match instr {
@@ -315,7 +320,7 @@ impl State {
                     let end = usize::from(y + b) * 64 + min(usize::from(x) + 8, 63);
                     {
                         let write_area = &mut vram[start..=end];
-                        write_area.into_iter().zip(bits).for_each(|(v, s)| {
+                        write_area.iter_mut().zip(bits).for_each(|(v, s)| {
                             if *v && *s {
                                 collision = true;
                             }
@@ -377,7 +382,6 @@ impl State {
                     let digit = u8::try_from(digit.to_digit(10).unwrap()).unwrap();
                     self.memory[self.vi + idx] = digit;
                 }
-                // self.vi += 3;
             }
             StoreRegisters { register } => {
                 info!("Storing registers 0 - {register}");
@@ -566,10 +570,11 @@ impl Instr {
 
 async fn handle_delay_timer(delay_timer: Arc<Mutex<u8>>) {
     loop {
-        let mut delay_timer = delay_timer.lock().unwrap();
-        *delay_timer = delay_timer.saturating_sub(1);
-        drop(delay_timer);
-        Timer::after(Duration::from_secs_f64(1f64 / 60f64)).await;
+        {
+            let mut delay_timer = delay_timer.lock().unwrap();
+            *delay_timer = delay_timer.saturating_sub(1);
+        }
+        Timer::after(Duration::from_secs_f32(1f32 / 60f32)).await;
     }
 }
 
@@ -579,7 +584,7 @@ async fn sdl2(vram: Arc<Mutex<[bool; 64 * 32]>>, keypad: Arc<Mutex<Keypad>>) {
     let video_subsystem = sdl_context.video().unwrap();
 
     let window = video_subsystem
-        .window("rust-sdl2 demo", 640, 320)
+        .window("chip8", 640, 320)
         .position_centered()
         .build()
         .unwrap();
@@ -618,6 +623,7 @@ async fn sdl2(vram: Arc<Mutex<[bool; 64 * 32]>>, keypad: Arc<Mutex<Keypad>>) {
                             | F    | G    | H    | J
                             | V    | B    | N    | M
                         ),
+                    repeat: false,
                     ..
                 } => {
                     let keycode = keycode.unwrap();
@@ -634,6 +640,7 @@ async fn sdl2(vram: Arc<Mutex<[bool; 64 * 32]>>, keypad: Arc<Mutex<Keypad>>) {
                             | F    | G    | H    | J
                             | V    | B    | N    | M
                         ),
+                    repeat: false,
                     ..
                 } => {
                     let keycode = keycode.unwrap();
@@ -646,28 +653,21 @@ async fn sdl2(vram: Arc<Mutex<[bool; 64 * 32]>>, keypad: Arc<Mutex<Keypad>>) {
         }
         // The rest of the game loop goes here...
 
+        let vram = vram.lock().unwrap().map(|pix| pix as u8 * 255);
+        tex.update(None, &vram, 64).unwrap();
+
         trace!("Drawing frame");
-        tex.with_lock(None, |buf, _| {
-            let vram = vram.lock().unwrap();
-            vram.iter()
-                .map(|pix| if *pix { 255 } else { 0 })
-                .zip(buf)
-                .for_each(|(new, old)| *old = new);
-        })
-        .unwrap();
         canvas.copy(&tex, None, None).unwrap();
 
         canvas.present();
-        let end = std::time::Instant::now();
-        Timer::after(Duration::from_secs_f64(1f64 / 60f64) - (end - start)).await;
-        let end = std::time::Instant::now();
-        let diff = (end - start).as_micros() as f64;
+        Timer::after(Duration::from_secs_f64(1f64 / 60f64).saturating_sub(start.elapsed())).await;
+        let diff = start.elapsed().as_micros() as f64;
         trace!("FPS: {:.1}", 1f64 / (diff / 1000000.0));
     }
 }
 
 impl Keypad {
-    fn press(&mut self, keycode: Keycode) -> &mut Self {
+    fn press(&mut self, keycode: Keycode) {
         use Keycode::*;
         match keycode {
             Num4 => self.0[0x1] = true,
@@ -688,9 +688,8 @@ impl Keypad {
             M => self.0[0xF] = true,
             _ => {}
         };
-        self
     }
-    fn release(&mut self, keycode: Keycode) -> &mut Self {
+    fn release(&mut self, keycode: Keycode) {
         use Keycode::*;
         match keycode {
             Num4 => self.0[0x1] = false,
@@ -711,7 +710,6 @@ impl Keypad {
             M => self.0[0xF] = false,
             _ => {}
         };
-        self
     }
 
     fn is_pressed(&self, key: u8) -> bool {
