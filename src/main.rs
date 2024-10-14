@@ -110,9 +110,9 @@ impl State<'_> {
             let instr = self.fetch();
             debug!("{:04X}: {instr:04X?}", self.pc);
             let instr = instr.decode();
-            futures::pending!();
-            // Timer::after(Duration::from_millis(30)).await;
             self.execute(instr)?;
+            // futures::pending!();
+            Timer::after(Duration::from_secs_f32(1f32 / 100f32)).await;
         }
     }
 
@@ -490,9 +490,15 @@ async fn sdl2(vram: &Mutex<[bool; 64 * 32]>) {
 
     canvas.set_logical_size(64, 32).unwrap();
     canvas.clear();
+
+    let texcreator = canvas.texture_creator();
+    let mut tex = texcreator
+        .create_texture_streaming(PixelFormatEnum::RGB332, 64, 32)
+        .unwrap();
     canvas.present();
     let mut event_pump = sdl_context.event_pump().unwrap();
     loop {
+        let start = std::time::Instant::now();
         canvas.clear();
         for event in event_pump.poll_iter() {
             match event {
@@ -508,31 +514,23 @@ async fn sdl2(vram: &Mutex<[bool; 64 * 32]>) {
             }
         }
         // The rest of the game loop goes here...
-        {
-            trace!("Drawing frame");
-            let texcreator = canvas.texture_creator();
-            let mut tex = texcreator
-                .create_texture_streaming(PixelFormatEnum::ABGR8888, 64, 32)
-                .unwrap();
-            tex.with_lock(None, |buf, _| {
-                let vram = vram.lock().unwrap();
-                vram.iter()
-                    .map(|pix| {
-                        if *pix {
-                            [255, 255, 255, 255]
-                        } else {
-                            [0, 0, 0, 255]
-                        }
-                    })
-                    .flatten()
-                    .zip(buf)
-                    .for_each(|(new, old)| *old = new);
-            })
-            .unwrap();
-            canvas.copy(&tex, None, None).unwrap();
-        }
+
+        trace!("Drawing frame");
+        tex.with_lock(None, |buf, _| {
+            let vram = vram.lock().unwrap();
+            vram.iter()
+                .map(|pix| if *pix { 255 } else { 0 })
+                .zip(buf)
+                .for_each(|(new, old)| *old = new);
+        })
+        .unwrap();
+        canvas.copy(&tex, None, None).unwrap();
 
         canvas.present();
-        Timer::after(Duration::new(0, 1_000_000_000u32 / 60)).await;
+        let end = std::time::Instant::now();
+        Timer::after(Duration::from_secs_f64(1f64 / 60f64) - (end - start)).await;
+        let end = std::time::Instant::now();
+        let diff = (end - start).as_micros() as f64;
+        trace!("FPS: {:.1}", 1f64 / (diff / 1000000.0));
     }
 }
