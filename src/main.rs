@@ -235,7 +235,7 @@ impl State<'_> {
                 let (result, carry) = x.overflowing_sub(y);
                 *x = result;
                 let flags = &mut self.registers[u4::new(0xF)];
-                *flags = u8::from(carry);
+                *flags = u8::from(!carry);
             }
             ShiftRight { x, y } => {
                 info!("Setting register {x} to shifted register {y}");
@@ -253,7 +253,7 @@ impl State<'_> {
                 let (result, carry) = y.overflowing_sub(*x);
                 *x = result;
                 let flags = &mut self.registers[u4::new(0xF)];
-                *flags = u8::from(carry);
+                *flags = u8::from(!carry);
             }
             ShiftLeft { x, y } => {
                 info!("Setting register {x} to shifted register {y}");
