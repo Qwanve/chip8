@@ -108,6 +108,14 @@ impl State<'_> {
                 debug!("Jumping to {address:X}");
                 self.pc = address.into();
             }
+            SkipIfEqual { register, value } => {
+                debug!("Skipping if register {register} is {value:X}");
+                let reg = self.registers[usize::from(u16::from(register))];
+                if reg == value {
+                    trace!("Skipped");
+                    self.pc += 2;
+                }
+            }
             LoadRegister { register, value } => {
                 debug!("Load register {register} with {value}");
                 self.registers[usize::from(u16::from(register))] = value;
@@ -120,6 +128,11 @@ impl State<'_> {
             LoadIRegister { value } => {
                 debug!("Load register I with {value}");
                 self.vi = value.into();
+            }
+            JumpWithOffset { address } => {
+                debug!("Jumping to address {address:04X} + V0");
+                let reg = self.registers[0];
+                self.pc = u16::from(address).wrapping_add(u16::from(reg));
             }
             DrawSprite { x, y, bytes } => {
                 let x = self.registers[usize::from(u16::from(x))];
@@ -159,9 +172,11 @@ struct Instr(u16);
 enum DecodedInstr {
     ClearScreen,
     Jump { address: u12 },
+    SkipIfEqual { register: u4, value: u8 },
     LoadRegister { register: u4, value: u8 },
     AddToRegister { register: u4, value: u8 },
     LoadIRegister { value: u12 },
+    JumpWithOffset { address: u12 },
     DrawSprite { x: u4, y: u4, bytes: u4 },
     IllegalInstruction(u16),
 }
@@ -173,6 +188,10 @@ impl Instr {
             0x1000..=0x1FFF => DecodedInstr::Jump {
                 address: (self.0 & 0x0FFF).try_into().unwrap(),
             },
+            0x3000..=0x3FFF => DecodedInstr::SkipIfEqual {
+                register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                value: (self.0 & 0xFF).try_into().unwrap(),
+            },
             0x6000..=0x6FFF => DecodedInstr::LoadRegister {
                 register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
                 value: (self.0 & 0xFF).try_into().unwrap(),
@@ -183,6 +202,9 @@ impl Instr {
             },
             0xA000..=0xAFFF => DecodedInstr::LoadIRegister {
                 value: (self.0 & 0x0FFF).try_into().unwrap(),
+            },
+            0xB000..=0xBFFF => DecodedInstr::JumpWithOffset {
+                address: (self.0 & 0x0FFF).try_into().unwrap(),
             },
             0xD000..=0xDFFF => DecodedInstr::DrawSprite {
                 x: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
