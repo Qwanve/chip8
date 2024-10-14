@@ -336,6 +336,16 @@ impl State<'_, '_, '_> {
                 info!("Storing delay timer in register {register}");
                 self.registers[register] = *self.delay_timer.lock().unwrap();
             }
+            WaitForKeyPress { register } => {
+                info!("Waiting for keypress to put in register {register}");
+                if let Some(key) = self.keypad.lock().unwrap().first_pressed() {
+                    debug!("Key pressed: {key}");
+                    self.registers[register] = key;
+                } else {
+                    debug!("Still waiting");
+                    self.pc -= 2;
+                }
+            }
             SetDelayTimer { register } => {
                 info!("Setting delay timer to register {register}");
                 *self.delay_timer.lock().unwrap() = self.registers[register];
@@ -408,6 +418,7 @@ enum DecodedInstr {
     SkipIfPressed { key: u4 },
     SkipIfNotPressed { key: u4 },
     StoreDelayTimer { register: u4 },
+    WaitForKeyPress { register: u4 },
     SetDelayTimer { register: u4 },
     AddToIRegister { register: u4 },
     BinaryCodedDecimal { register: u4 },
@@ -513,6 +524,9 @@ impl Instr {
             },
             0xF000..=0xFFFF => match u8::try_from(self.0 & 0xFF).unwrap() {
                 0x07 => DecodedInstr::StoreDelayTimer {
+                    register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                },
+                0x0A => DecodedInstr::WaitForKeyPress {
                     register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
                 },
                 0x15 => DecodedInstr::SetDelayTimer {
@@ -689,5 +703,8 @@ impl Keypad {
 
     fn is_pressed(&self, key: u8) -> bool {
         self.0[key as usize]
+    }
+    fn first_pressed(&self) -> Option<u8> {
+        self.0.iter().position(|x| *x).map(|x| x as u8)
     }
 }
