@@ -297,7 +297,8 @@ impl State<'_, '_, '_> {
                 let y = y % 0x1F;
 
                 for b in 0..bytes {
-                    if y + b > 32 {
+                    //Drawing past the bottom
+                    if y + b >= 32 {
                         break;
                     }
                     let byte = self.memory[self.vi + u16::from(b)];
