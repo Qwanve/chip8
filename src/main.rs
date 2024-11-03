@@ -56,7 +56,10 @@ impl Index<u16> for Memory {
         trace!("Accessing memory {idx:#X}");
         match idx {
             0x1FF => &0,
-            0x200.. => &self.rom[usize::from(idx) - 0x200],
+            0x200.. => {
+                let idx = usize::from(idx) - 0x200;
+                self.rom.get(idx).unwrap_or(&0)
+            }
             _ => todo!(),
         }
     }
@@ -66,7 +69,13 @@ impl IndexMut<u16> for Memory {
         trace!("Accessing memory {idx:#X}");
         //TODO: Fonts
         match idx {
-            0x200.. => &mut self.rom[usize::from(idx) - 0x200],
+            0x200.. => {
+                let idx = usize::from(idx) - 0x200;
+                if self.rom.len() <= idx {
+                    self.rom.resize_with(idx + 1, Default::default);
+                }
+                &mut self.rom[idx]
+            }
             _ => todo!(),
         }
     }
