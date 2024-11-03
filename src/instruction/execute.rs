@@ -38,6 +38,7 @@ pub enum DecodedInstr {
     SetDelayTimer { register: u4 },
     SetSoundTimer { register: u4 },
     AddToIRegister { register: u4 },
+    GetCharSprite { char: u4 },
     BinaryCodedDecimal { register: u4 },
     StoreRegisters { register: u4 },
     LoadRegisters { register: u4 },
@@ -285,6 +286,10 @@ impl crate::State {
             AddToIRegister { register } => {
                 info!("Adding register {register} to I");
                 self.vi += u16::from(self.registers[register]);
+            }
+            GetCharSprite { char } => {
+                info!("Loading location of sprite {char:X}");
+                self.vi = u16::from(char) * 5;
             }
             BinaryCodedDecimal { register } => {
                 info!("Converting register {register} to decimal");

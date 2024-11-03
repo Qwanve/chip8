@@ -119,6 +119,9 @@ impl Instr {
                 0x1E => DecodedInstr::AddToIRegister {
                     register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
                 },
+                0x29 => DecodedInstr::GetCharSprite {
+                    char: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                },
                 0x33 => DecodedInstr::BinaryCodedDecimal {
                     register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
                 },
