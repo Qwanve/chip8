@@ -109,6 +109,9 @@ impl Instr {
                 0x15 => DecodedInstr::SetDelayTimer {
                     register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
                 },
+                0x18 => DecodedInstr::SetSoundTimer {
+                    register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                },
                 0x1E => DecodedInstr::AddToIRegister {
                     register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
                 },

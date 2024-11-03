@@ -35,6 +35,7 @@ pub enum DecodedInstr {
     StoreDelayTimer { register: u4 },
     WaitForKeyPress { register: u4 },
     SetDelayTimer { register: u4 },
+    SetSoundTimer { register: u4 },
     AddToIRegister { register: u4 },
     BinaryCodedDecimal { register: u4 },
     StoreRegisters { register: u4 },
@@ -270,6 +271,10 @@ impl crate::State {
             SetDelayTimer { register } => {
                 info!("Setting delay timer to register {register}");
                 *self.delay_timer.lock().unwrap() = self.registers[register];
+            }
+            SetSoundTimer { register } => {
+                info!("Setting sound timer to register {register}");
+                *self.sound_timer.lock().unwrap() = self.registers[register];
             }
             AddToIRegister { register } => {
                 info!("Adding register {register} to I");

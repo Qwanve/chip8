@@ -19,6 +19,7 @@ fn main() {
     let vram = Arc::new(Mutex::<[bool; 64 * 32]>::new([false; 64 * 32]));
     let keypad = Arc::new(Mutex::new(io::Keypad([false; 16])));
     let delay_timer = Arc::new(Mutex::new(0));
+    let sound_timer = Arc::new(Mutex::new(0));
     let file = std::env::args()
         .nth(1)
         .expect("Expected rom as first arguement");
@@ -28,12 +29,14 @@ fn main() {
         vram.clone(),
         keypad.clone(),
         delay_timer.clone(),
+        sound_timer.clone(),
         rom,
     );
-    let mut disp = pin!(io::sdl2(vram.clone(), keypad.clone()).fuse());
+    let mut disp = pin!(io::sdl2(vram.clone(), keypad.clone(), sound_timer.clone()).fuse());
     smol::block_on(async {
         select! {
             _ = disp => return,
+            _ = handle_timer(sound_timer).fuse() => {},
             _ = handle_timer(delay_timer).fuse() => {},
             reason = state.run().fuse() => error!("Core returned: {reason:?}"),
         };
@@ -104,6 +107,7 @@ struct State {
     vi: u16,
     keypad: Arc<Mutex<io::Keypad>>,
     delay_timer: Arc<Mutex<u8>>,
+    sound_timer: Arc<Mutex<u8>>,
     last_key_press: Option<u8>,
 }
 impl State {
@@ -111,6 +115,7 @@ impl State {
         vram: Arc<Mutex<[bool; 64 * 32]>>,
         keypad: Arc<Mutex<io::Keypad>>,
         delay_timer: Arc<Mutex<u8>>,
+        sound_timer: Arc<Mutex<u8>>,
         rom: Vec<u8>,
     ) -> State {
         State {
@@ -122,6 +127,7 @@ impl State {
             vi: 0,
             keypad,
             delay_timer,
+            sound_timer,
             last_key_press: None,
         }
     }

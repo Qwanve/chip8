@@ -4,6 +4,7 @@ use sdl2::pixels::PixelFormatEnum;
 
 use core::time::Duration;
 use log::*;
+use sdl2::audio::{AudioCallback, AudioSpecDesired};
 use smol::Timer;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -11,10 +12,29 @@ use std::sync::Mutex;
 pub async fn sdl2(
     vram: Arc<Mutex<[bool; 64 * 32]>>,
     keypad: Arc<Mutex<Keypad>>,
+    sound_timer: Arc<Mutex<u8>>,
 ) {
     info!("Warming up sdl system");
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
+    let audio_subsystem = sdl_context.audio().unwrap();
+
+    let desired_audio_spec = AudioSpecDesired {
+        freq: None,
+        channels: Some(1),
+        samples: None,
+    };
+
+    let audio_device = audio_subsystem
+        .open_playback(None, &desired_audio_spec, |spec| {
+            // initialize the audio callback
+            SquareWave {
+                phase_inc: 880.0 / spec.freq as f32,
+                phase: 0.0,
+                volume: 0.25,
+            }
+        })
+        .unwrap();
 
     let window = video_subsystem
         .window("chip8", 640, 320)
@@ -86,6 +106,13 @@ pub async fn sdl2(
         }
         // The rest of the game loop goes here...
 
+        let beep = *sound_timer.lock().unwrap() > 1;
+        if beep {
+            audio_device.resume();
+        } else {
+            audio_device.pause();
+        }
+
         let vram = vram.lock().unwrap().map(|pix| pix as u8 * 255);
         tex.update(None, &vram, 64).unwrap();
 
@@ -153,5 +180,27 @@ impl Keypad {
     }
     pub fn first_pressed(&self) -> Option<u8> {
         self.0.iter().position(|x| *x).map(|x| x as u8)
+    }
+}
+
+struct SquareWave {
+    phase_inc: f32,
+    phase: f32,
+    volume: f32,
+}
+
+impl AudioCallback for SquareWave {
+    type Channel = f32;
+
+    fn callback(&mut self, out: &mut [f32]) {
+        // Generate a square wave
+        for x in out.iter_mut() {
+            *x = if self.phase <= 0.5 {
+                self.volume
+            } else {
+                -self.volume
+            };
+            self.phase = (self.phase + self.phase_inc) % 1.0;
+        }
     }
 }
