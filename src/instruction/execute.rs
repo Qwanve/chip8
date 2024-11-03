@@ -29,6 +29,7 @@ pub enum DecodedInstr {
     ShiftLeft { x: u4, y: u4 },
     LoadIRegister { value: u12 },
     JumpWithOffset { address: u12 },
+    LoadRandom { register: u4, mask: u8 },
     DrawSprite { x: u4, y: u4, bytes: u4 },
     SkipIfPressed { key: u4 },
     SkipIfNotPressed { key: u4 },
@@ -197,6 +198,11 @@ impl crate::State {
                 info!("Jumping to address {address:04X} + V0");
                 let reg = self.registers[u4::new(0)];
                 self.pc = u16::from(address).wrapping_add(u16::from(reg));
+            }
+            LoadRandom { register, mask } => {
+                info!("Generating random number into register {register}");
+                //TODO: Actual random number
+                self.registers[register] = fastrand::u8(..) & mask;
             }
             DrawSprite { x, y, bytes } => {
                 let x = self.registers[x];

@@ -85,6 +85,10 @@ impl Instr {
             0xB000..=0xBFFF => DecodedInstr::JumpWithOffset {
                 address: (self.0 & 0x0FFF).try_into().unwrap(),
             },
+            0xC000..=0xCFFF => DecodedInstr::LoadRandom {
+                register: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
+                mask: (self.0 & 0xFF).try_into().unwrap(),
+            },
             0xD000..=0xDFFF => DecodedInstr::DrawSprite {
                 x: ((self.0 & 0x0F00) >> 8).try_into().unwrap(),
                 y: ((self.0 & 0x00F0) >> 4).try_into().unwrap(),
